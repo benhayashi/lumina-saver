@@ -1,0 +1,24 @@
+[Desktop Entry]
+Name=LuminaSaver
+GenericName=Photo & Video Slideshow Screensaver
+Comment=High-performance photo and video screensaver & slideshow viewer for large media collections
+Exec=lumina-saver
+Icon=lumina-saver
+Terminal=false
+Type=Application
+Categories=Graphics;Viewer;Utility;Screensaver;
+Keywords=photos;slideshow;screensaver;images;videos;mpv;gallery;
+StartupNotify=true
+Actions=Configure;Windowed;Screensaver;
+
+[Desktop Action Configure]
+Name=Settings & Folders
+Exec=lumina-saver --config
+
+[Desktop Action Windowed]
+Name=Launch Windowed Slideshow
+Exec=lumina-saver --windowed
+
+[Desktop Action Screensaver]
+Name=Launch Fullscreen Screensaver
+Exec=lumina-saver --screensaver

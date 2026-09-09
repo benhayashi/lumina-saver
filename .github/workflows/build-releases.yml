@@ -1,0 +1,119 @@
+name: Build Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows Executable (.exe / .scr)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install dependencies & PyInstaller
+        run: |
+          uv sync
+          uv pip install pyinstaller
+
+      - name: Build Windows Standalone Executables
+        run: |
+          uv run pyinstaller --noconfirm --clean `
+            --onefile `
+            --windowed `
+            --name "LuminaSaver" `
+            --add-data "resources;resources" `
+            --hidden-import "PySide6.QtMultimedia" `
+            --hidden-import "PySide6.QtMultimediaWidgets" `
+            --hidden-import "av" `
+            --hidden-import "pillow_heif" `
+            --hidden-import "watchdog" `
+            lumina_saver/main.py
+          Copy-Item -Path "dist\LuminaSaver.exe" -Destination "dist\LuminaSaver.scr" -Force
+
+      - name: Create Windows ZIP Package
+        run: |
+          Compress-Archive -Path dist\LuminaSaver.exe, dist\LuminaSaver.scr, packaging\windows\install-screensaver.ps1, README.md, LICENSE -DestinationPath LuminaSaver-Windows-x64.zip
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LuminaSaver-Windows-x64
+          path: LuminaSaver-Windows-x64.zip
+
+  build-linux:
+    name: Build Linux Executable (ELF x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmpv-dev mpv libegl1 libgl1 libxkbcommon-x11-0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install dependencies & PyInstaller
+        run: |
+          uv sync
+          uv pip install pyinstaller
+
+      - name: Build Linux Standalone Executable
+        run: |
+          uv run pyinstaller --noconfirm --clean \
+            --onefile \
+            --windowed \
+            --name "lumina-saver" \
+            --add-data "resources:resources" \
+            --hidden-import "PySide6.QtMultimedia" \
+            --hidden-import "PySide6.QtMultimediaWidgets" \
+            --hidden-import "av" \
+            --hidden-import "pillow_heif" \
+            --hidden-import "watchdog" \
+            lumina_saver/main.py
+          chmod +x dist/lumina-saver
+
+      - name: Create Linux Tarball Package
+        run: |
+          tar -czvf LuminaSaver-Linux-x64.tar.gz -C dist lumina-saver -C ../packaging/linux lumina-saver.desktop lumina-saver.xml install.sh -C ../ resources/icon.svg README.md LICENSE
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LuminaSaver-Linux-x64
+          path: LuminaSaver-Linux-x64.tar.gz
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LuminaSaver-Windows-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: LuminaSaver-Linux-x64
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            LuminaSaver-Windows-x64.zip
+            LuminaSaver-Linux-x64.tar.gz
+          generate_release_notes: true

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<screensaver name="lumina-saver" _label="LuminaSaver">
+  <command arg="-root"/>
+  <_description>
+LuminaSaver - Modern high-performance photo and video screensaver &amp; slideshow viewer.
+Handles 60,000+ files with hardware acceleration, modern formats (HEIC, JXL, AVIF, RAW),
+and sleek glassmorphism HUD overlays.
+
+https://github.com/
+  </_description>
+</screensaver>
