@@ -75,6 +75,19 @@ class UIOverlay(QWidget):
         main_layout.addLayout(top_layout)
         main_layout.addStretch()
 
+        # Center Notification / Toast Message Card
+        self.toast_card = GlassCard(self)
+        toast_box = QHBoxLayout(self.toast_card)
+        self.lbl_toast = QLabel("", self.toast_card)
+        self.lbl_toast.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        self.lbl_toast.setStyleSheet("color: #60A5FA;")
+        toast_box.addWidget(self.lbl_toast)
+        self.toast_card.hide()
+
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self.toast_card.hide)
+
         # Center Paused Indicator
         self.paused_card = GlassCard(self)
         paused_box = QHBoxLayout(self.paused_card)
@@ -84,6 +97,7 @@ class UIOverlay(QWidget):
         paused_box.addWidget(self.lbl_paused)
         self.paused_card.hide()
 
+        main_layout.addWidget(self.toast_card, alignment=Qt.AlignCenter)
         main_layout.addWidget(self.paused_card, alignment=Qt.AlignCenter)
         main_layout.addStretch()
 
@@ -157,6 +171,13 @@ class UIOverlay(QWidget):
     def set_paused(self, paused: bool):
         self.is_paused = paused
         self.paused_card.setVisible(paused)
+
+    def show_temporary_message(self, message: str, duration_ms: int = 2500):
+        """Displays a temporary HUD card notification that auto-dismisses after duration_ms."""
+        self.lbl_toast.setText(message)
+        self.toast_card.show()
+        self.toast_card.raise_()
+        self._toast_timer.start(duration_ms)
 
     def cycle_overlay_mode(self) -> str:
         modes = ["full", "minimal", "off"]

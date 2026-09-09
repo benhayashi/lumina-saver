@@ -10,6 +10,15 @@ class TransitionManager:
     @staticmethod
     def apply_crossfade(old_widget: QWidget, new_widget: QWidget, duration_ms: int = 1000, on_complete=None):
         """Crossfades old_widget to new_widget with smooth opacity curves."""
+        # Cancel any pending transition on old or new widgets
+        for w in (old_widget, new_widget):
+            if hasattr(w, "_current_transition") and w._current_transition:
+                try:
+                    w._current_transition.stop()
+                except Exception:
+                    pass
+                w._current_transition = None
+
         old_effect = QGraphicsOpacityEffect(old_widget)
         new_effect = QGraphicsOpacityEffect(new_widget)
 
@@ -39,12 +48,12 @@ class TransitionManager:
             old_widget.hide()
             old_widget.setGraphicsEffect(None)
             new_widget.setGraphicsEffect(None)
+            new_widget._current_transition = None
             if on_complete:
                 on_complete()
 
         group.finished.connect(cleanup)
         group.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
-        # Keep reference attached
         new_widget._current_transition = group
 
     @staticmethod

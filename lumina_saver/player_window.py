@@ -53,7 +53,7 @@ class PlayerWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
 
         self.layout = QStackedLayout(self.central_widget)
-        self.layout.setStackingMode(QStackedLayout.StackingMode.StackOne)
+        self.layout.setStackingMode(QStackedLayout.StackingMode.StackAll)
 
         # Layer 0 & Layer 1 Image Labels for Crossfading & FFmpeg frame display
         self.img_label1 = QLabel(self)
@@ -63,6 +63,7 @@ class PlayerWindow(QMainWindow):
         self.img_label2 = QLabel(self)
         self.img_label2.setAlignment(Qt.AlignCenter)
         self.img_label2.setStyleSheet("background-color: black;")
+        self.img_label2.hide()
 
         self.layout.addWidget(self.img_label1)
         self.layout.addWidget(self.img_label2)
@@ -71,6 +72,7 @@ class PlayerWindow(QMainWindow):
         # Dedicated QVideoWidget for QtMultimedia (direct member of stacked layout)
         self.qvideo_widget = QVideoWidget(self)
         self.qvideo_widget.setStyleSheet("background-color: black;")
+        self.qvideo_widget.hide()
         self.layout.addWidget(self.qvideo_widget)
 
         # HUD Overlay Widget
@@ -258,6 +260,7 @@ class PlayerWindow(QMainWindow):
             QTimer.singleShot(100, self.next_media)
             return
 
+        is_first_photo = not hasattr(self, "current_raw_pixmap") or self.current_raw_pixmap is None
         self.current_raw_pixmap = pixmap
         self.current_duration = self.config.image_duration
 
@@ -266,6 +269,8 @@ class PlayerWindow(QMainWindow):
         current_label = self.img_label1 if self.active_label_idx == 0 else self.img_label2
         next_label = self.img_label2 if self.active_label_idx == 0 else self.img_label1
 
+        self.qvideo_widget.hide()
+
         container_size = self.central_widget.size()
         if container_size.width() <= 0 or container_size.height() <= 0:
             container_size = self.size()
@@ -273,12 +278,25 @@ class PlayerWindow(QMainWindow):
         scaled_pixmap = pixmap.scaled(container_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         next_label.setPixmap(scaled_pixmap)
 
-        self.layout.setCurrentWidget(next_label)
+        trans_type = self.config.get("transition_type", "kenburns")
+        trans_duration = int(float(self.config.get("transition_duration", 1.0)) * 1000)
+
+        if is_first_photo or trans_type == "none" or trans_duration <= 0:
+            current_label.hide()
+            next_label.show()
+            next_label.raise_()
+        else:
+            TransitionManager.apply_crossfade(current_label, next_label, duration_ms=trans_duration)
+
         self.active_label_idx = target_idx
 
     def _display_video(self, file_path: str):
         if self.ff_player:
             self.ff_player.stop()
+
+        # Hide image display labels
+        self.img_label1.hide()
+        self.img_label2.hide()
 
         duration_mode = self.config.get("video_duration_mode", "full")
         if duration_mode == "photo_duration":
@@ -291,7 +309,8 @@ class PlayerWindow(QMainWindow):
         mute = self.config.get("mute_videos", False)
 
         if self.mpv_player:
-            self.layout.setCurrentWidget(self.qvideo_widget)
+            self.qvideo_widget.show()
+            self.qvideo_widget.raise_()
             try:
                 self.mpv_player.mute = mute
                 self.mpv_player.play(file_path)
@@ -300,7 +319,8 @@ class PlayerWindow(QMainWindow):
                 print(f"[Player] Failed to play video via mpv: {e}")
 
         if self.qt_player:
-            self.layout.setCurrentWidget(self.qvideo_widget)
+            self.qvideo_widget.show()
+            self.qvideo_widget.raise_()
             try:
                 self.audio_output.setVolume(0.0 if mute else 1.0)
                 self.qt_player.stop()
@@ -313,7 +333,10 @@ class PlayerWindow(QMainWindow):
 
         # PyAV FFmpeg Fallback
         if self.ff_player:
-            self.layout.setCurrentWidget(self.img_label1)
+            self.qvideo_widget.hide()
+            self.img_label2.hide()
+            self.img_label1.show()
+            self.img_label1.raise_()
             print(f"[Player] Falling back to FFmpeg PyAV player for {os.path.basename(file_path)}")
             success = self.ff_player.load_and_play(file_path)
             if not success:

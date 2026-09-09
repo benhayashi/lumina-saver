@@ -2,8 +2,9 @@ import os
 import sqlite3
 import random
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any, Generator
 
 class MediaIndexer:
     """SQLite-backed high-performance media scanner and random selector for 60k+ items."""
@@ -25,16 +26,22 @@ class MediaIndexer:
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
 
-    def get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def close(self):
         """Closes any background handles and releases database locks."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            conn.close()
         except Exception:
             pass
 
