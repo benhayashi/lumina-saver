@@ -1,9 +1,9 @@
 # LuminaSaver 🌟
 
-[![CI Test Suite](https://github.com/OWNER/lumina-saver/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/lumina-saver/actions/workflows/ci.yml)
+[![CI Test Suite](https://github.com/benhayashi/lumina-saver/actions/workflows/ci.yml/badge.svg)](https://github.com/benhayashi/lumina-saver/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-brightgreen.svg)]()
-[![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Docker-brightgreen.svg)]()
+[![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.14-blue.svg)]()
 
 **LuminaSaver** is a modern, high-performance, cross-platform photo and video screensaver and slideshow player built to handle massive media collections (60,000+ files on local or network shares) with hardware acceleration, modern format decoding, interlocked multi-display support, and sleek translucent HUD overlays.
 
@@ -55,7 +55,7 @@ Inspired by and built as a modern successor to the classic [Random Photo Screens
 ### 1. Clone & Run with `uv`
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/lumina-saver.git
+git clone https://github.com/benhayashi/lumina-saver.git
 cd lumina-saver
 
 # Sync environment and run
@@ -116,6 +116,39 @@ Installs:
 - Desktop Launcher: `~/.local/share/applications/lumina-saver.desktop`
 - Application Icon: `~/.local/share/icons/hicolor/scalable/apps/lumina-saver.svg`
 - XScreenSaver config: `/usr/share/xscreensaver/config/lumina-saver.xml`
+
+---
+
+### Docker Deployment 🐳
+
+LuminaSaver can run inside a containerized Ubuntu environment with full GPU hardware acceleration and X11 display forwarding.
+
+#### 1. Quick Start with Docker Compose
+```bash
+# Allow local Docker container to connect to X11 display
+xhost +local:root
+
+# Start with default settings mounting ./media
+docker compose up
+```
+
+#### 2. Run with Custom Photo Directory via `docker run`
+```bash
+# Allow local X11 connections
+xhost +local:root
+
+# Run fullscreen with GPU acceleration and host photos mounted
+docker run --rm -it \
+    --net=host \
+    -e DISPLAY=$DISPLAY \
+    -e QT_X11_NO_MITSHM=1 \
+    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    -v $HOME/.Xauthority:/root/.Xauthority:ro \
+    -v /path/to/your/photos:/media:ro \
+    -v lumina-config:/root/.lumina_saver \
+    --device /dev/dri:/dev/dri \
+    lumina-saver:latest --fullscreen
+```
 
 ---
 

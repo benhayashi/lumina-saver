@@ -1,0 +1,24 @@
+services:
+  lumina-saver:
+    build: .
+    image: lumina-saver:latest
+    container_name: lumina-saver
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      # X11 Display Socket
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:ro
+      # Photo & Video Media Directory (mount host photos here)
+      - ${MEDIA_DIR:-./media}:/media:ro
+      # Configuration persistence
+      - lumina-config:/root/.lumina_saver
+    devices:
+      # GPU Hardware Acceleration (DRI)
+      - /dev/dri:/dev/dri
+    command: ["--fullscreen"]
+
+volumes:
+  lumina-config:
