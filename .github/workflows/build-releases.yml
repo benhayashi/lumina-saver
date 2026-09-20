@@ -86,15 +86,22 @@ jobs:
             lumina_saver/main.py
           chmod +x dist/lumina-saver
 
+      - name: Build Debian (.deb) Package
+        run: |
+          chmod +x packaging/linux/package-deb.sh
+          ./packaging/linux/package-deb.sh
+
       - name: Create Linux Tarball Package
         run: |
           tar -czvf LuminaSaver-Linux-x64.tar.gz -C dist lumina-saver -C ../packaging/linux lumina-saver.desktop lumina-saver.xml install.sh -C ../ resources/icon.svg README.md LICENSE
 
-      - name: Upload Linux Artifact
+      - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: LuminaSaver-Linux-x64
-          path: LuminaSaver-Linux-x64.tar.gz
+          path: |
+            LuminaSaver-Linux-x64.tar.gz
+            dist/*.deb
 
   release:
     name: Publish GitHub Release
@@ -116,4 +123,5 @@ jobs:
           files: |
             LuminaSaver-Windows-x64.zip
             LuminaSaver-Linux-x64.tar.gz
+            *.deb
           generate_release_notes: true
