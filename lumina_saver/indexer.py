@@ -79,7 +79,10 @@ class MediaIndexer:
 
     def scan_directories(self, progress_callback=None) -> int:
         """Asynchronously scan configured directories and sync with SQLite DB."""
+        import warnings
         from PIL import Image
+        Image.MAX_IMAGE_PIXELS = None
+        warnings.simplefilter("ignore", Image.DecompressionBombWarning)
 
         found_files: List[Tuple[str, str, str, str, str, int, float, int, int]] = []
         start_time = time.time()

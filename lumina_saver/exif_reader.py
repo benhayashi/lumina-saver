@@ -1,7 +1,11 @@
 import os
+import warnings
 from pathlib import Path
 from typing import Dict, Any, Optional
 from PIL import Image, ExifTags
+
+Image.MAX_IMAGE_PIXELS = None
+warnings.simplefilter("ignore", Image.DecompressionBombWarning)
 
 class ExifReader:
     """Extracts EXIF metadata from modern photo formats (JPEG, HEIC, JXL, AVIF, RAW)."""

@@ -42,5 +42,16 @@ class TestMediaLoader(unittest.TestCase):
         pixmap = MediaLoader.load_image_pixmap(corrupt_path)
         self.assertIsNone(pixmap)
 
+    def test_large_image_decompression_bomb_safety(self):
+        # Create an image exceeding 89.5M pixels (e.g. 10,000 x 10,000 = 100M pixels)
+        large_path = os.path.join(self.temp_dir.name, "large_pano.jpg")
+        img = Image.new("RGB", (10000, 10000), color="blue")
+        img.save(large_path)
+
+        # Should load without DecompressionBombWarning or error
+        pixmap = MediaLoader.load_image_pixmap(large_path)
+        self.assertIsNotNone(pixmap)
+        self.assertFalse(pixmap.isNull())
+
 if __name__ == "__main__":
     unittest.main()
