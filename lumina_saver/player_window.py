@@ -264,6 +264,14 @@ class PlayerWindow(QMainWindow):
         self.current_raw_pixmap = pixmap
         self.current_duration = self.config.image_duration
 
+        # Lazily record photo dimensions into SQLite if not already indexed
+        if self.current_media and self.current_media.get("id"):
+            media_id = self.current_media["id"]
+            if self.current_media.get("width", 0) <= 0:
+                self.indexer.update_media_dimensions(media_id, pixmap.width(), pixmap.height())
+                self.current_media["width"] = pixmap.width()
+                self.current_media["height"] = pixmap.height()
+
         # Dual label crossfade
         target_idx = 1 if self.active_label_idx == 0 else 0
         current_label = self.img_label1 if self.active_label_idx == 0 else self.img_label2

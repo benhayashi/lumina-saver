@@ -77,7 +77,22 @@ class MediaIndexer:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_media_type ON media_files(media_type);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_last_shown ON media_files(last_shown);")
 
-    def scan_directories(self, progress_callback=None) -> int:
+    def _batch_insert(self, files: List[Tuple[str, str, str, str, str, int, float, int, int]]):
+        if not files:
+            return
+        with self.get_connection() as conn:
+            conn.executemany("""
+                INSERT INTO media_files (file_path, folder_path, file_name, media_type, extension, file_size, mtime, width, height)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_path) DO UPDATE SET
+                    file_size=excluded.file_size,
+                    mtime=excluded.mtime,
+                    width=CASE WHEN excluded.width > 0 THEN excluded.width ELSE media_files.width END,
+                    height=CASE WHEN excluded.height > 0 THEN excluded.height ELSE media_files.height END;
+            """, files)
+            conn.commit()
+
+    def scan_directories(self, progress_callback=None, inspect_dimensions: bool = False) -> int:
         """Asynchronously scan configured directories and sync with SQLite DB."""
         import warnings
         from PIL import Image
@@ -87,6 +102,7 @@ class MediaIndexer:
         found_files: List[Tuple[str, str, str, str, str, int, float, int, int]] = []
         start_time = time.time()
         count = 0
+        batch_size = 500
 
         # Pre-load existing file cache (path -> (size, mtime))
         existing_cache: Dict[str, Tuple[int, float]] = {}
@@ -133,7 +149,8 @@ class MediaIndexer:
                                     continue
 
                             w, h = 0, 0
-                            if media_type == "image":
+                            # Only open image if deep dimension inspection is explicitly requested
+                            if inspect_dimensions and media_type == "image":
                                 try:
                                     with Image.open(full_path) as img:
                                         w, h = img.width, img.height
@@ -152,29 +169,36 @@ class MediaIndexer:
                                 h
                             ))
                             count += 1
-                            if count % 2000 == 0 and progress_callback:
-                                progress_callback(count)
+
+                            if len(found_files) >= batch_size:
+                                self._batch_insert(found_files)
+                                found_files.clear()
+                                if progress_callback:
+                                    progress_callback(count)
+
                         except OSError:
                             continue
 
-        print(f"[Indexer] Discovered {len(found_files)} media files in {time.time() - start_time:.2f}s")
-        
-        # Batch insert into SQLite
-        with self.get_connection() as conn:
-            conn.executemany("""
-                INSERT INTO media_files (file_path, folder_path, file_name, media_type, extension, file_size, mtime, width, height)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(file_path) DO UPDATE SET
-                    file_size=excluded.file_size,
-                    mtime=excluded.mtime,
-                    width=excluded.width,
-                    height=excluded.height;
-            """, found_files)
-            conn.commit()
+        # Final batch insert
+        if found_files:
+            self._batch_insert(found_files)
+            found_files.clear()
 
+        print(f"[Indexer] Scan finished: {count} media files processed in {time.time() - start_time:.2f}s")
+        
         # Clean up stale files or files from unconfigured directories
         self._purge_stale_files()
         return self.get_total_count()
+
+    def update_media_dimensions(self, media_id: int, width: int, height: int):
+        """Lazily updates photo dimensions in SQLite when decoded for display."""
+        if not media_id or (width <= 0 and height <= 0):
+            return
+        try:
+            with self.get_connection() as conn:
+                conn.execute("UPDATE media_files SET width = ?, height = ? WHERE id = ? AND (width = 0 OR height = 0);", (width, height, media_id))
+        except Exception:
+            pass
 
     def _purge_stale_files(self):
         with self.get_connection() as conn:
@@ -202,11 +226,11 @@ class MediaIndexer:
 
         # Resolution filtering
         if min_res == "720p":
-            where_clauses.append("(width >= 1280 OR height >= 1280 OR media_type = 'video')")
+            where_clauses.append("(width >= 1280 OR height >= 1280 OR width = 0 OR media_type = 'video')")
         elif min_res == "1080p":
-            where_clauses.append("(width >= 1920 OR height >= 1920 OR media_type = 'video')")
+            where_clauses.append("(width >= 1920 OR height >= 1920 OR width = 0 OR media_type = 'video')")
         elif min_res == "4k":
-            where_clauses.append("(width >= 3840 OR height >= 3840 OR media_type = 'video')")
+            where_clauses.append("(width >= 3840 OR height >= 3840 OR width = 0 OR media_type = 'video')")
 
         # Orientation filtering
         if orientation == "landscape":

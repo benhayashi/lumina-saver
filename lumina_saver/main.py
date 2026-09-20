@@ -1,11 +1,12 @@
 import sys
 import os
+import signal
 import argparse
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QListWidget, QDoubleSpinBox, QComboBox, QCheckBox, QMessageBox, QGroupBox
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QIcon
 
 from lumina_saver.config import ConfigManager
@@ -319,6 +320,9 @@ def main():
         if dlg.exec() != QDialog.DialogCode.Accepted and not is_screensaver:
             sys.exit(0)
 
+    # Cleanly exit on terminal Ctrl+C without traceback
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
     indexer = MediaIndexer(
         db_path=config.get("cache_db_path"),
         media_dirs=config.media_directories,
@@ -326,8 +330,10 @@ def main():
         video_exts=config.get("video_extensions")
     )
 
-    # Fast incremental background scan
-    indexer.scan_directories()
+    # If library is empty, do a fast initial scan so there are files to show immediately
+    if indexer.get_total_count() == 0:
+        print("[Main] Initial media library scan...")
+        indexer.scan_directories()
 
     screens = app.screens()
     mmon_mode = config.get("multi_monitor_mode", "dual_independent")
@@ -352,6 +358,20 @@ def main():
         controller = MultiMonitorController(players=players, config=config)
         p.multi_controller = controller
         p.start()
+
+    # Start non-blocking background scanner worker to keep index synced
+    scanner_worker = ScannerWorker(indexer)
+    app._scanner_worker = scanner_worker
+    scanner_worker.start()
+
+    # Auto re-index interval timer if configured
+    reindex_mins = config.get("auto_reindex_minutes", 15)
+    if reindex_mins > 0:
+        reindex_timer = QTimer(app)
+        reindex_timer.setInterval(reindex_mins * 60 * 1000)
+        reindex_timer.timeout.connect(lambda: scanner_worker.start() if not scanner_worker.isRunning() else None)
+        reindex_timer.start()
+        app._reindex_timer = reindex_timer
 
     sys.exit(app.exec())
 
