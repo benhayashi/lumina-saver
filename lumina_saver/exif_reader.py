@@ -1,7 +1,7 @@
 import os
 import warnings
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from PIL import Image, ExifTags
 
 Image.MAX_IMAGE_PIXELS = None
@@ -9,6 +9,31 @@ warnings.simplefilter("ignore", Image.DecompressionBombWarning)
 
 class ExifReader:
     """Extracts EXIF metadata from modern photo formats (JPEG, HEIC, JXL, AVIF, RAW)."""
+
+    @staticmethod
+    def get_image_dimensions(file_path: str) -> Tuple[int, int]:
+        """Fast header-only extraction of image dimensions taking EXIF orientation into account.
+        Returns (width, height) in pixels, or (0, 0) on failure.
+        """
+        try:
+            try:
+                from pillow_heif import register_heif_opener
+                register_heif_opener()
+            except ImportError:
+                pass
+
+            with Image.open(file_path) as img:
+                w, h = img.width, img.height
+                try:
+                    exif = img.getexif()
+                    orientation = exif.get(ExifTags.Base.Orientation, 1) if exif else 1
+                    if orientation in (5, 6, 7, 8):
+                        w, h = h, w
+                except Exception:
+                    pass
+                return w, h
+        except Exception:
+            return 0, 0
 
     @staticmethod
     def extract_metadata(file_path: str) -> Dict[str, Any]:
@@ -31,8 +56,14 @@ class ExifReader:
                 pass
 
             with Image.open(file_path) as img:
-                info["dimensions"] = f"{img.width} × {img.height}"
+                w, h = img.width, img.height
                 exif_data = img.getexif()
+
+                if exif_data:
+                    orientation = exif_data.get(ExifTags.Base.Orientation, 1)
+                    if orientation in (5, 6, 7, 8):
+                        w, h = h, w
+                info["dimensions"] = f"{w} × {h}"
 
                 if exif_data:
                     raw_tags = {}

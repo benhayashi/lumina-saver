@@ -19,9 +19,22 @@ class ScannerWorker(QThread):
     def __init__(self, indexer: MediaIndexer):
         super().__init__()
         self.indexer = indexer
+        self._is_interrupted = False
+
+    def stop(self):
+        self._is_interrupted = True
 
     def run(self):
+        self._is_interrupted = False
+        # 1. Fast directory scan
         self.indexer.scan_directories(progress_callback=lambda count: self.progress.emit(count))
+
+        # 2. Lazily inspect unindexed dimensions in the background during idle time
+        while not self._is_interrupted:
+            updated = self.indexer.populate_unindexed_dimensions(batch_size=50)
+            if updated == 0:
+                break
+            self.msleep(15)  # Yield CPU and network so playback remains 100% smooth
 
 class SettingsDialog(QDialog):
     """Configuration GUI for selecting folders, resolution/orientation filters, and video options."""

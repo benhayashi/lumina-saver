@@ -191,14 +191,39 @@ class MediaIndexer:
         return self.get_total_count()
 
     def update_media_dimensions(self, media_id: int, width: int, height: int):
-        """Lazily updates photo dimensions in SQLite when decoded for display."""
+        """Updates photo dimensions in SQLite when decoded or inspected."""
         if not media_id or (width <= 0 and height <= 0):
             return
         try:
             with self.get_connection() as conn:
-                conn.execute("UPDATE media_files SET width = ?, height = ? WHERE id = ? AND (width = 0 OR height = 0);", (width, height, media_id))
+                conn.execute("UPDATE media_files SET width = ?, height = ? WHERE id = ?;", (width, height, media_id))
+                conn.commit()
         except Exception:
             pass
+
+    def populate_unindexed_dimensions(self, batch_size: int = 50) -> int:
+        """Inspects dimensions for a batch of unindexed images (width = 0) in SQLite.
+        Returns the number of files inspected in this batch.
+        """
+        from lumina_saver.exif_reader import ExifReader
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, file_path FROM media_files WHERE media_type = 'image' AND width = 0 LIMIT ?;",
+                (batch_size,)
+            ).fetchall()
+            if not rows:
+                return 0
+
+            updates = []
+            for row in rows:
+                w, h = ExifReader.get_image_dimensions(row["file_path"])
+                if w > 0 and h > 0:
+                    updates.append((w, h, row["id"]))
+
+            if updates:
+                conn.executemany("UPDATE media_files SET width = ?, height = ? WHERE id = ?;", updates)
+                conn.commit()
+            return len(rows)
 
     def _purge_stale_files(self):
         with self.get_connection() as conn:
@@ -234,9 +259,9 @@ class MediaIndexer:
 
         # Orientation filtering
         if orientation == "landscape":
-            where_clauses.append("(width >= height OR width = 0 OR media_type = 'video')")
+            where_clauses.append("((width >= height AND width > 0) OR width = 0 OR (media_type = 'video' AND (width >= height OR width = 0)))")
         elif orientation == "portrait":
-            where_clauses.append("(height > width OR height = 0 OR media_type = 'video')")
+            where_clauses.append("((height > width AND height > 0) OR width = 0 OR (media_type = 'video' AND (height > width OR width = 0)))")
 
         where_str = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         return where_str, params
@@ -256,6 +281,8 @@ class MediaIndexer:
         skip_folder: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """Returns next media file matching filters, handling random or sequential resume order."""
+        from lumina_saver.exif_reader import ExifReader
+
         total = self.get_total_count(min_res, orientation)
         if total == 0:
             return None
@@ -265,33 +292,88 @@ class MediaIndexer:
             self.history_index += 1
             return self.history_stack[self.history_index]
 
+        def matches_filters(cand: Dict[str, Any]) -> bool:
+            w, h = cand.get("width", 0), cand.get("height", 0)
+            mtype = cand.get("media_type", "image")
+            if mtype == "image":
+                if orientation == "landscape" and w > 0 and h > 0 and w < h:
+                    return False
+                if orientation == "portrait" and w > 0 and h > 0 and h <= w:
+                    return False
+                max_d = max(w, h)
+                if min_res == "720p" and max_d > 0 and max_d < 1280:
+                    return False
+                if min_res == "1080p" and max_d > 0 and max_d < 1920:
+                    return False
+                if min_res == "4k" and max_d > 0 and max_d < 3840:
+                    return False
+            elif mtype == "video":
+                if orientation == "landscape" and w > 0 and h > 0 and w < h:
+                    return False
+                if orientation == "portrait" and w > 0 and h > 0 and h <= w:
+                    return False
+            return True
+
+        def inspect_candidate(cand: Dict[str, Any], conn) -> bool:
+            if cand.get("media_type") == "image" and cand.get("width", 0) <= 0:
+                w, h = ExifReader.get_image_dimensions(cand["file_path"])
+                if w > 0 and h > 0:
+                    cand["width"] = w
+                    cand["height"] = h
+                    try:
+                        conn.execute("UPDATE media_files SET width = ?, height = ? WHERE id = ?", (w, h, cand["id"]))
+                        conn.commit()
+                    except Exception:
+                        pass
+            return matches_filters(cand)
+
         where_str, params = self._build_filter_sql(min_res, orientation, skip_folder)
         selected = None
 
         with self.get_connection() as conn:
             if display_order == "sequential":
-                # Find item after last_id
-                seq_where = where_str + (" AND " if where_str else " WHERE ") + "id > ?"
-                seq_params = params + [last_id]
-                row = conn.execute(f"SELECT * FROM media_files{seq_where} ORDER BY id ASC LIMIT 1;", seq_params).fetchone()
+                current_last_id = last_id
+                max_attempts = 100
+                for _ in range(max_attempts):
+                    seq_where = where_str + (" AND " if where_str else " WHERE ") + "id > ?"
+                    seq_params = params + [current_last_id]
+                    row = conn.execute(f"SELECT * FROM media_files{seq_where} ORDER BY id ASC LIMIT 1;", seq_params).fetchone()
 
-                if not row:
-                    # Wrap around to the beginning of the collection!
-                    row = conn.execute(f"SELECT * FROM media_files{where_str} ORDER BY id ASC LIMIT 1;", params).fetchone()
+                    if not row:
+                        # Wrap around to beginning of collection
+                        row = conn.execute(f"SELECT * FROM media_files{where_str} ORDER BY id ASC LIMIT 1;", params).fetchone()
 
-                if row:
-                    selected = dict(row)
+                    if not row:
+                        break
+
+                    cand = dict(row)
+                    if inspect_candidate(cand, conn):
+                        selected = cand
+                        break
+                    else:
+                        current_last_id = cand["id"]
             else:
                 # Random / Least recently shown mode
-                query = f"SELECT * FROM media_files{where_str} ORDER BY last_shown ASC, RANDOM() LIMIT 50;"
-                rows = conn.execute(query, params).fetchall()
-                if not rows and skip_folder:
-                    # Fallback without skip_folder
-                    fallback_where, fallback_params = self._build_filter_sql(min_res, orientation)
-                    rows = conn.execute(f"SELECT * FROM media_files{fallback_where} ORDER BY RANDOM() LIMIT 20;", fallback_params).fetchall()
-                
-                if rows:
-                    selected = dict(random.choice(rows))
+                max_batches = 5
+                for _ in range(max_batches):
+                    query = f"SELECT * FROM media_files{where_str} ORDER BY last_shown ASC, RANDOM() LIMIT 50;"
+                    rows = conn.execute(query, params).fetchall()
+                    if not rows and skip_folder:
+                        fallback_where, fallback_params = self._build_filter_sql(min_res, orientation)
+                        rows = conn.execute(f"SELECT * FROM media_files{fallback_where} ORDER BY RANDOM() LIMIT 20;", fallback_params).fetchall()
+
+                    if not rows:
+                        break
+
+                    cand_list = [dict(r) for r in rows]
+                    random.shuffle(cand_list)
+                    for cand in cand_list:
+                        if inspect_candidate(cand, conn):
+                            selected = cand
+                            break
+
+                    if selected:
+                        break
 
             if not selected:
                 return None

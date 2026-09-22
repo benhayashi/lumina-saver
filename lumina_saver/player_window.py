@@ -220,23 +220,10 @@ class PlayerWindow(QMainWindow):
         file_path = media["file_path"]
         media_type = media["media_type"]
 
-        meta = ExifReader.extract_metadata(file_path)
-        min_res = self.config.get("min_resolution", "none")
-        orient = self.config.get("orientation_filter", "all")
-        total_count = media.get("total_count") or self.indexer.get_total_count(min_res, orient)
-        current_idx = media.get("display_index", self.indexer.history_index + 1)
-
-        self.overlay.update_metadata(meta, current_idx, total_count)
-
         if media_type == "image":
             self._display_image(file_path)
         elif media_type == "video":
             self._display_video(file_path)
-
-        self.slide_start_time = time.time()
-        if not self.is_paused:
-            self.slide_timer.start(int(self.current_duration * 1000))
-            self.progress_timer.start()
 
     def _display_image(self, file_path: str):
         # Stop all video engines if playing
@@ -257,20 +244,60 @@ class PlayerWindow(QMainWindow):
         
         if not pixmap:
             print(f"[Player] Could not render image {file_path}. Skipping...")
-            QTimer.singleShot(100, self.next_media)
+            if self.indexer.history_stack and self.indexer.history_index >= 0:
+                self.indexer.history_stack.pop(self.indexer.history_index)
+                self.indexer.history_index -= 1
+            QTimer.singleShot(50, self.next_media)
+            return
+
+        w, h = pixmap.width(), pixmap.height()
+
+        # Update SQLite with true rendered dimensions
+        if self.current_media and self.current_media.get("id"):
+            media_id = self.current_media["id"]
+            self.indexer.update_media_dimensions(media_id, w, h)
+            self.current_media["width"] = w
+            self.current_media["height"] = h
+
+        # Strict post-load orientation gate
+        orient = self.config.get("orientation_filter", "all")
+        if orient == "landscape" and h > w:
+            print(f"[Player] Discarding portrait image in landscape-only mode: {file_path} ({w}x{h})")
+            if self.indexer.history_stack and self.indexer.history_index >= 0:
+                self.indexer.history_stack.pop(self.indexer.history_index)
+                self.indexer.history_index -= 1
+            QTimer.singleShot(0, self.next_media)
+            return
+        elif orient == "portrait" and w >= h:
+            print(f"[Player] Discarding landscape image in portrait-only mode: {file_path} ({w}x{h})")
+            if self.indexer.history_stack and self.indexer.history_index >= 0:
+                self.indexer.history_stack.pop(self.indexer.history_index)
+                self.indexer.history_index -= 1
+            QTimer.singleShot(0, self.next_media)
+            return
+
+        # Strict post-load resolution gate
+        min_res = self.config.get("min_resolution", "none")
+        max_d = max(w, h)
+        if (min_res == "720p" and max_d < 1280) or \
+           (min_res == "1080p" and max_d < 1920) or \
+           (min_res == "4k" and max_d < 3840):
+            print(f"[Player] Discarding low-resolution image ({w}x{h}) for min_res {min_res}: {file_path}")
+            if self.indexer.history_stack and self.indexer.history_index >= 0:
+                self.indexer.history_stack.pop(self.indexer.history_index)
+                self.indexer.history_index -= 1
+            QTimer.singleShot(0, self.next_media)
             return
 
         is_first_photo = not hasattr(self, "current_raw_pixmap") or self.current_raw_pixmap is None
         self.current_raw_pixmap = pixmap
         self.current_duration = self.config.image_duration
 
-        # Lazily record photo dimensions into SQLite if not already indexed
-        if self.current_media and self.current_media.get("id"):
-            media_id = self.current_media["id"]
-            if self.current_media.get("width", 0) <= 0:
-                self.indexer.update_media_dimensions(media_id, pixmap.width(), pixmap.height())
-                self.current_media["width"] = pixmap.width()
-                self.current_media["height"] = pixmap.height()
+        # Update overlay metadata
+        meta = ExifReader.extract_metadata(file_path)
+        total_count = self.current_media.get("total_count") or self.indexer.get_total_count(min_res, orient)
+        current_idx = self.current_media.get("display_index", self.indexer.history_index + 1)
+        self.overlay.update_metadata(meta, current_idx, total_count)
 
         # Dual label crossfade
         target_idx = 1 if self.active_label_idx == 0 else 0
@@ -298,6 +325,11 @@ class PlayerWindow(QMainWindow):
 
         self.active_label_idx = target_idx
 
+        self.slide_start_time = time.time()
+        if not self.is_paused:
+            self.slide_timer.start(int(self.current_duration * 1000))
+            self.progress_timer.start()
+
     def _display_video(self, file_path: str):
         if self.ff_player:
             self.ff_player.stop()
@@ -313,6 +345,19 @@ class PlayerWindow(QMainWindow):
             self.current_duration = float(self.config.get("max_video_duration_seconds", 180))
         else:  # "full"
             self.current_duration = 3600.0  # Let video end naturally
+
+        # Update overlay metadata
+        min_res = self.config.get("min_resolution", "none")
+        orient = self.config.get("orientation_filter", "all")
+        meta = ExifReader.extract_metadata(file_path)
+        total_count = self.current_media.get("total_count") or self.indexer.get_total_count(min_res, orient)
+        current_idx = self.current_media.get("display_index", self.indexer.history_index + 1)
+        self.overlay.update_metadata(meta, current_idx, total_count)
+
+        self.slide_start_time = time.time()
+        if not self.is_paused:
+            self.slide_timer.start(int(self.current_duration * 1000))
+            self.progress_timer.start()
 
         mute = self.config.get("mute_videos", False)
 
