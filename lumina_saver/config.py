@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
         ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".webm", ".m4v", ".flv"
     ],
     "enable_hardware_acceleration": True,
+    "prevent_display_sleep": True,       # Keep screen awake past OS display sleep / screen saver timeout
     "cache_db_path": str(Path.home() / ".lumina_saver" / "media_index.db")
 }
 

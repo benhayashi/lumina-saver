@@ -12,6 +12,7 @@ from PySide6.QtGui import QFont, QIcon
 from lumina_saver.config import ConfigManager
 from lumina_saver.indexer import MediaIndexer
 from lumina_saver.player_window import PlayerWindow
+from lumina_saver.sleep_inhibitor import SleepInhibitor
 
 class ScannerWorker(QThread):
     progress = Signal(int)
@@ -177,6 +178,12 @@ class SettingsDialog(QDialog):
         self.chk_interlock.setChecked(self.config.get("interlocked_multi_monitor", True))
         win_layout.addWidget(self.chk_interlock)
 
+        # Prevent Display Sleep Checkbox
+        self.chk_prevent_sleep = QCheckBox("Prevent Display Sleep / Screen Timeout (Keep screen awake)", self)
+        self.chk_prevent_sleep.setChecked(self.config.get("prevent_display_sleep", True))
+        self.chk_prevent_sleep.setToolTip("Disables screen blanking, DPMS monitor power-off, and OS screen lock timeouts while LuminaSaver is running.")
+        win_layout.addWidget(self.chk_prevent_sleep)
+
         layout.addWidget(grp_win)
 
         # Resolution & Orientation Filters Group
@@ -263,6 +270,7 @@ class SettingsDialog(QDialog):
         self.config.set("video_duration_mode", self.combo_vmode.currentData())
         self.config.set("min_resolution", self.combo_res.currentData())
         self.config.set("orientation_filter", self.combo_orient.currentData())
+        self.config.set("prevent_display_sleep", self.chk_prevent_sleep.isChecked())
         
         if show_message:
             QMessageBox.information(self, "Settings Saved", "LuminaSaver configuration updated successfully!")
@@ -283,6 +291,8 @@ General Options:
   -c, --config          Open configuration settings dialog
   -w, --windowed        Run in standalone windowed mode (1280x720)
   -f, --fullscreen      Run in standalone fullscreen mode
+  --prevent-sleep       Keep display awake and disable screen timeouts
+  --allow-sleep         Allow normal OS display sleep and screen timeouts
 
 Screensaver Options:
   -s, --screensaver     Run in screensaver mode (exits on mouse movement or Esc)
@@ -310,6 +320,7 @@ def main():
     is_screensaver = False
     show_config = False
     force_window_mode = None
+    override_prevent_sleep = None
 
     for arg in raw_args:
         if arg in ("/s", "-s", "--screensaver", "-root"):
@@ -323,10 +334,16 @@ def main():
             force_window_mode = "windowed"
         elif arg in ("-f", "--fullscreen"):
             force_window_mode = "fullscreen"
+        elif arg == "--prevent-sleep":
+            override_prevent_sleep = True
+        elif arg == "--allow-sleep":
+            override_prevent_sleep = False
 
     config = ConfigManager()
     if force_window_mode:
         config.data["window_mode"] = force_window_mode
+    if override_prevent_sleep is not None:
+        config.data["prevent_display_sleep"] = override_prevent_sleep
 
     if show_config or (len(sys.argv) == 1 and not is_screensaver):
         dlg = SettingsDialog(config)
@@ -348,6 +365,13 @@ def main():
         print("[Main] Initial media library scan...")
         indexer.scan_directories()
 
+    # Initialize cross-platform display sleep / screen timeout inhibitor
+    sleep_inhibitor = SleepInhibitor(app_name="LuminaSaver", reason="LuminaSaver Slideshow active")
+    app._sleep_inhibitor = sleep_inhibitor
+    if config.get("prevent_display_sleep", True):
+        sleep_inhibitor.inhibit()
+    app.aboutToQuit.connect(sleep_inhibitor.release)
+
     screens = app.screens()
     mmon_mode = config.get("multi_monitor_mode", "dual_independent")
     players = []
@@ -356,19 +380,19 @@ def main():
         # Launch independent slideshow player on each connected screen!
         print(f"[Main] Launching dual/multi-monitor independent slideshow across {len(screens)} screens.")
         for scr in screens:
-            p = PlayerWindow(config=config, indexer=indexer, is_screensaver=is_screensaver, target_screen=scr)
+            p = PlayerWindow(config=config, indexer=indexer, is_screensaver=is_screensaver, target_screen=scr, sleep_inhibitor=sleep_inhibitor)
             players.append(p)
 
         # Set up Interlocked Multi-Monitor Controller
-        controller = MultiMonitorController(players=players, config=config)
+        controller = MultiMonitorController(players=players, config=config, sleep_inhibitor=sleep_inhibitor)
         for p in players:
             p.multi_controller = controller
             p.start()
     else:
         # Single screen mode
-        p = PlayerWindow(config=config, indexer=indexer, is_screensaver=is_screensaver, target_screen=app.primaryScreen())
+        p = PlayerWindow(config=config, indexer=indexer, is_screensaver=is_screensaver, target_screen=app.primaryScreen(), sleep_inhibitor=sleep_inhibitor)
         players.append(p)
-        controller = MultiMonitorController(players=players, config=config)
+        controller = MultiMonitorController(players=players, config=config, sleep_inhibitor=sleep_inhibitor)
         p.multi_controller = controller
         p.start()
 

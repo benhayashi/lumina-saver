@@ -21,12 +21,13 @@ from lumina_saver.ff_player import PyAVVideoPlayer
 class PlayerWindow(QMainWindow):
     """Main media display window for photo & video slideshow with multi-monitor & windowed support."""
 
-    def __init__(self, config: ConfigManager, indexer: MediaIndexer, is_screensaver: bool = False, target_screen=None):
+    def __init__(self, config: ConfigManager, indexer: MediaIndexer, is_screensaver: bool = False, target_screen=None, sleep_inhibitor=None):
         super().__init__()
         self.config = config
         self.indexer = indexer
         self.is_screensaver = is_screensaver
         self.target_screen = target_screen
+        self.sleep_inhibitor = sleep_inhibitor
 
         self.current_media: Optional[Dict[str, Any]] = None
         self.is_paused = False
@@ -219,6 +220,9 @@ class PlayerWindow(QMainWindow):
         self.current_media = media
         file_path = media["file_path"]
         media_type = media["media_type"]
+
+        if self.sleep_inhibitor:
+            self.sleep_inhibitor.heartbeat_ping()
 
         if media_type == "image":
             self._display_image(file_path)
@@ -501,6 +505,11 @@ class PlayerWindow(QMainWindow):
         super().mouseMoveEvent(event)
 
     def closeEvent(self, event):
+        if self.sleep_inhibitor:
+            try:
+                self.sleep_inhibitor.release()
+            except Exception:
+                pass
         if self.mpv_player:
             try:
                 self.mpv_player.terminate()

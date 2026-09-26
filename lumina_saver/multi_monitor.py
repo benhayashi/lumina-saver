@@ -4,16 +4,27 @@ from PySide6.QtCore import Qt, QObject, QEvent
 class MultiMonitorController(QObject):
     """Orchestrates interlocked key controls and synchronized playback across multi-display setups."""
 
-    def __init__(self, players: List[Any] = None, config: Any = None):
+    def __init__(self, players: List[Any] = None, config: Any = None, sleep_inhibitor: Any = None):
         super().__init__()
         self.players = players or []
         self.config = config
+        self.sleep_inhibitor = sleep_inhibitor
         self.active_focus_index = 0
 
     def add_player(self, player):
         if player not in self.players:
             self.players.append(player)
             player.multi_controller = self
+
+    def close_all(self):
+        """Closes all displays and releases sleep inhibition."""
+        if self.sleep_inhibitor:
+            try:
+                self.sleep_inhibitor.release()
+            except Exception:
+                pass
+        for p in list(self.players):
+            p.close()
 
     def handle_key_event(self, event, sender_player) -> bool:
         """Processes interlocked keyboard shortcuts across all connected display windows.
@@ -31,8 +42,7 @@ class MultiMonitorController(QObject):
         # Global Actions Across ALL Displays
         if key in (Qt.Key_Escape, Qt.Key_Q):
             print("[MultiMonitor] Interlocked Close: Exit all displays.")
-            for p in list(self.players):
-                p.close()
+            self.close_all()
             return True
 
         elif key == Qt.Key_Space:
